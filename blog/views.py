@@ -2,6 +2,7 @@ from django.core.paginator import Paginator, PageNotAnInteger, EmptyPage
 from django.shortcuts import render, get_object_or_404
 from django.views.generic import ListView
 from django.core.mail import send_mail
+from django.db.models import Count
 
 from blog.forms import EmailForm, CommentForm
 from blog.models import Post
@@ -37,6 +38,8 @@ def post_list(request, tag_slug=None):
 
 
 def post_detail(request, year, month, day, slug):
+    NUM_RECOMMENDED_POSTS = 4
+
     post = get_object_or_404(
         Post, slug=slug, status='published', publish__year=year, publish__month=month, publish__day=day
     )
@@ -53,13 +56,19 @@ def post_detail(request, year, month, day, slug):
     else:
         comment_form = CommentForm()
 
-    return render(
-        request,
-        'blog/post/detail.html',
-        {'post': post,
-            'comments': comments,
-            'new_comment': new_comment,
-            'comment_form': comment_form, })
+    post_tag_ids = post.tags.values_list('id', flat=True)
+    similar_posts = Post.published.filter(tags__in=post_tag_ids) \
+        .exclude(id=post.id)
+    similar_posts = similar_posts.annotate(same_tags=Count('tags')) \
+        .order_by('-same_tags', '-publish')[:NUM_RECOMMENDED_POSTS]
+
+    return render(request, 'blog/post/detail.html', {
+        'post': post,
+        'comments': comments,
+        'new_comment': new_comment,
+        'comment_form': comment_form,
+        'similar_posts': similar_posts,
+    })
 
 
 def share_post(request, post_id):
@@ -77,4 +86,8 @@ def share_post(request, post_id):
             sent_email = True
     else:
         form = EmailForm()
-    return render(request, 'blog/post/share.html', {'post': post, 'form': form, 'sent_email': sent_email})
+    return render(request, 'blog/post/share.html', {
+        'post': post,
+        'form': form,
+        'sent_email': sent_email,
+    })
