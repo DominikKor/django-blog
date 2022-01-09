@@ -1,13 +1,15 @@
+from django.contrib.postgres.search import SearchVector, SearchQuery, SearchRank, TrigramSimilarity
+from django.core.mail import send_mail
 from django.core.paginator import Paginator, PageNotAnInteger, EmptyPage
+from django.db.models import Count
 from django.shortcuts import render, get_object_or_404
 from django.views.generic import ListView
-from django.core.mail import send_mail
-from django.db.models import Count
+from taggit.models import Tag
 
-from blog.forms import EmailForm, CommentForm
+from blog.forms import EmailForm, CommentForm, SearchForm
 from blog.models import Post
 
-from taggit.models import Tag
+NUM_RECOMMENDED_POSTS = 4
 
 
 class PostListView(ListView):
@@ -38,8 +40,6 @@ def post_list(request, tag_slug=None):
 
 
 def post_detail(request, year, month, day, slug):
-    NUM_RECOMMENDED_POSTS = 4
-
     post = get_object_or_404(
         Post, slug=slug, status='published', publish__year=year, publish__month=month, publish__day=day
     )
@@ -60,7 +60,7 @@ def post_detail(request, year, month, day, slug):
     similar_posts = Post.published.filter(tags__in=post_tag_ids) \
         .exclude(id=post.id)
     similar_posts = similar_posts.annotate(same_tags=Count('tags')) \
-        .order_by('-same_tags', '-publish')[:NUM_RECOMMENDED_POSTS]
+                        .order_by('-same_tags', '-publish')[:NUM_RECOMMENDED_POSTS]
 
     return render(request, 'blog/post/detail.html', {
         'post': post,
@@ -91,3 +91,23 @@ def share_post(request, post_id):
         'form': form,
         'sent_email': sent_email,
     })
+
+
+def post_search(request):
+    form = SearchForm()
+    query = None
+    results = []
+
+    if "query" in request.GET:
+        form = SearchForm(request.GET)
+        if form.is_valid():
+            query = form.cleaned_data["query"]
+            search_vector = \
+                SearchVector("title", weight="A") + \
+                SearchVector("body", weight="B")
+            search_query = SearchQuery(query)
+            results = Post.published.annotate(
+                rank=SearchRank(search_vector, search_query),
+                similarity=TrigramSimilarity("title", query),
+            ).filter(similarity__gt=0.1).order_by("-rank")
+    return render(request, "blog/post/search.html", {"form": form, "query": query, "results": results})
